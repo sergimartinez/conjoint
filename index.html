@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Encuesta sobre candidaturas políticas</title>
+<style>
+  :root { --ink:#1f2937; --muted:#6b7280; --line:#d1d5db; --accent:#1d4ed8; --bg:#f9fafb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         color:var(--ink); background:var(--bg); line-height:1.5; }
+  main { max-width: 640px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 1.4rem; margin: 0 0 12px; }
+  h2 { font-size: 1.1rem; margin: 24px 0 8px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); font-size: .9rem; }
+  .bar { height: 6px; background: #e5e7eb; border-radius: 3px; margin-bottom: 20px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); transition: width .3s; }
+  table { width: 100%; border-collapse: collapse; background: #fff; margin: 12px 0 20px; }
+  th, td { border: 1px solid var(--line); padding: 10px 8px; text-align: center; font-size: .95rem; }
+  thead th { background: #eef2ff; }
+  tbody th { text-align: left; background: #f3f4f6; font-weight: 600; width: 34%; }
+  .group { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .group.col { flex-direction: column; }
+  .opt { flex: 1 1 auto; min-width: 48px; padding: 12px 14px; font-size: 1rem; background: #fff;
+         border: 2px solid var(--line); border-radius: 10px; cursor: pointer; color: var(--ink); }
+  .opt.sel { border-color: var(--accent); background: #eff6ff; font-weight: 600; }
+  .group.scale .opt { flex: 0 0 calc(25% - 6px); }
+  .group.scale .opt.wide { flex: 1 1 100%; }
+  input[type=number] { width: 140px; padding: 12px; font-size: 1.1rem; border: 2px solid var(--line);
+                       border-radius: 10px; }
+  .primary { width: 100%; padding: 14px; font-size: 1.05rem; font-weight: 600; color: #fff;
+             background: var(--accent); border: 0; border-radius: 10px; cursor: pointer; margin-top: 16px; }
+  .primary:disabled { background: #9ca3af; cursor: not-allowed; }
+  .note { background: #fef3c7; border: 1px solid #fcd34d; padding: 10px; border-radius: 8px;
+          font-size: .85rem; margin-top: 16px; }
+  pre { white-space: pre-wrap; word-break: break-all; font-size: .75rem; background:#fff;
+        border:1px solid var(--line); padding:8px; border-radius:8px; }
+</style>
+</head>
+<body>
+<main id="app"></main>
+
+<script>
+/* ============ CONFIGURACIÓN ============ */
+const CONFIG = {
+  // Pegue aquí la URL de la aplicación web de Google Apps Script (termina en /exec).
+  // Si se deja vacío, la página funciona en modo prueba y no guarda nada.
+  endpoint: "https://script.google.com/macros/s/AKfycbxuM4ej2l2sE2oP6Puz5uba5TYNJ-iUgw9JzeS5kgLRHqLmUk3hHYk26h9Bvj-OxIW6/exec",
+  nTasks: 5
+};
+
+/* ============ ATRIBUTOS Y NIVELES ============ */
+const ATTRS = [
+  { key: "genero", label: "Género",
+    levels: ["Hombre", "Mujer"] },
+  { key: "etnia", label: "Origen étnico",
+    levels: ["Persona blanca (no gitana)", "Persona negra (afrodescendiente)",
+             "Persona gitana", "Persona latina (latinoamericana)"],
+    // Probabilidades relativas de aparición, en el mismo orden que los niveles.
+    // Aquí 35% blanca, 15% negra, 35% gitana y 15% latina. Cámbielas si lo desea.
+    weights: [35, 15, 35, 15] },
+  { key: "agenda", label: "Tema principal de su agenda",
+    levels: ["Políticas de redistribución y ayudas sociales", "Reducción de impuestos",
+             "Mejora de la sanidad y la educación públicas", "Acceso a la vivienda"] },
+  { key: "grupo", label: "Grupo social al que dedica más atención",
+    levels: ["Población gitana", "Personas en riesgo de exclusión social",
+             "Clase trabajadora", "Clases acomodadas"] }
+];
+const ATTR = Object.fromEntries(ATTRS.map(a => [a.key, a]));
+
+/* ============ UTILIDADES ============ */
+function randInt(n) {
+  if (window.crypto && crypto.getRandomValues) {
+    const buf = new Uint32Array(1);
+    const limit = Math.floor(4294967296 / n) * n;
+    do { crypto.getRandomValues(buf); } while (buf[0] >= limit);
+    return buf[0] % n;
+  }
+  return Math.floor(Math.random() * n);
+}
+function shuffle(arr) {
+  const b = arr.slice();
+  for (let i = b.length - 1; i > 0; i--) {
+    const j = randInt(i + 1);
+    [b[i], b[j]] = [b[j], b[i]];
+  }
+  return b;
+}
+function drawLevel(a) {
+  if (!a.weights) return a.levels[randInt(a.levels.length)];
+  const total = a.weights.reduce((s, w) => s + w, 0);
+  let r = (randInt(1000000) / 1000000) * total;
+  for (let i = 0; i < a.levels.length; i++) {
+    r -= a.weights[i];
+    if (r < 0) return a.levels[i];
+  }
+  return a.levels[a.levels.length - 1];
+}
+function drawProfile() {
+  const p = {};
+  ATTRS.forEach(a => { p[a.key] = drawLevel(a); });
+  return p;
+}
+function uid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return "r" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+const params = new URLSearchParams(location.search);
+const state = {
+  id: uid(),
+  src: params.get("src") || "",
+  order: shuffle(ATTRS.map(a => a.key)),   // orden de atributos, aleatorio por persona
+  demo: {},
+  task: 0,
+  startedAt: Date.now(),
+  demoLog: []
+};
+
+const app = document.getElementById("app");
+
+function clear() { app.innerHTML = ""; window.scrollTo(0, 0); }
+function node(html) {
+  const t = document.createElement("template");
+  t.innerHTML = html.trim();
+  return t.content.firstChild;
+}
+function progress(frac) {
+  return node('<div class="bar"><div style="width:' + Math.round(frac * 100) + '%"></div></div>');
+}
+function group(options, onSelect, cls) {
+  const wrap = document.createElement("div");
+  wrap.className = "group " + (cls || "");
+  options.forEach(o => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "opt" + (o.wide ? " wide" : "");
+    b.textContent = o.label;
+    b.addEventListener("click", () => {
+      Array.from(wrap.children).forEach(c => c.classList.remove("sel"));
+      b.classList.add("sel");
+      onSelect(o.value);
+    });
+    wrap.appendChild(b);
+  });
+  return wrap;
+}
+
+/* ============ ENVÍO DE DATOS ============ */
+function pendingList() {
+  try { return JSON.parse(localStorage.getItem("pending_rows") || "[]"); } catch (e) { return []; }
+}
+function savePending(list) {
+  try { localStorage.setItem("pending_rows", JSON.stringify(list)); } catch (e) { /* sin almacenamiento */ }
+}
+function post(row) {
+  return fetch(CONFIG.endpoint, {
+    method: "POST",
+    mode: "no-cors",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(row),
+    keepalive: true
+  });
+}
+function send(row) {
+  if (!CONFIG.endpoint) { state.demoLog.push(row); console.log("MODO PRUEBA", row); return; }
+  const queue = pendingList();
+  queue.push(row);
+  savePending(queue);
+  flush();
+}
+async function flush() {
+  let queue = pendingList();
+  while (queue.length) {
+    try { await post(queue[0]); } catch (e) { return; }   // sin conexión, se reintenta luego
+    queue = pendingList();
+    queue.shift();
+    savePending(queue);
+  }
+}
+window.addEventListener("online", () => { if (CONFIG.endpoint) flush(); });
+
+/* ============ PANTALLAS ============ */
+function showIntro() {
+  clear();
+  app.appendChild(progress(0));
+  app.appendChild(node(
+    '<div><h1>Bienvenido/a y gracias por participar</h1>' +
+    '<p>Esta encuesta forma parte de una investigación académica sobre cómo las personas eligen ' +
+    'a sus representantes políticos. Responder lleva unos 5 minutos y no hay respuestas ' +
+    'correctas ni incorrectas.</p>' +
+    '<p>Sus respuestas son anónimas, se usarán solo con fines de investigación y puede ' +
+    'abandonar la encuesta en cualquier momento cerrando esta página.</p>' +
+    '<p>Al pulsar el botón confirma que tiene 18 años o más y que acepta participar ' +
+    'voluntariamente.</p></div>'));
+  const btn = node('<button class="primary" type="button">Acepto y quiero continuar</button>');
+  btn.addEventListener("click", showDemo);
+  app.appendChild(btn);
+  if (!CONFIG.endpoint) {
+    app.appendChild(node('<div class="note">Modo prueba. No hay servidor configurado, así que las ' +
+      'respuestas no se guardan.</div>'));
+  }
+}
+
+function showDemo() {
+  clear();
+  app.appendChild(progress(0.05));
+  app.appendChild(node("<h1>Algunos datos sobre usted</h1>"));
+
+  app.appendChild(node("<h2>¿Cuántos años tiene?</h2>"));
+  const age = node('<input type="number" inputmode="numeric" min="18" max="99" placeholder="Edad">');
+  app.appendChild(age);
+
+  app.appendChild(node("<h2>¿Con qué género se identifica?</h2>"));
+  app.appendChild(group([
+    { label: "Hombre", value: "Hombre" },
+    { label: "Mujer", value: "Mujer" },
+    { label: "No binario u otra identidad", value: "No binario u otra" },
+    { label: "Prefiero no decirlo", value: "NS/NC" }
+  ], v => { state.demo.genero = v; check(); }, "col"));
+
+  app.appendChild(node(
+    "<h2>Ideología</h2><p>En política se habla de «izquierda» y «derecha». En una escala de 0 a 10, " +
+    "donde 0 es la extrema izquierda y 10 es la extrema derecha, ¿dónde se situaría usted?</p>"));
+  const ideo = [];
+  for (let i = 0; i <= 10; i++) ideo.push({ label: String(i), value: String(i) });
+  ideo.push({ label: "Prefiero no contestar", value: "NS/NC", wide: true });
+  app.appendChild(group(ideo, v => { state.demo.ideologia = v; check(); }, "scale"));
+  app.appendChild(node('<p class="muted">0 = extrema izquierda &nbsp;·&nbsp; 10 = extrema derecha</p>'));
+
+  const next = node('<button class="primary" type="button" disabled>Continuar</button>');
+  app.appendChild(next);
+
+  function check() {
+    const a = parseInt(age.value, 10);
+    state.demo.edad = a;
+    next.disabled = !(a >= 18 && a <= 99 && state.demo.genero && state.demo.ideologia);
+  }
+  age.addEventListener("input", check);
+  next.addEventListener("click", showTask);
+}
+
+function showTask() {
+  clear();
+  const t = state.task + 1;
+  app.appendChild(progress(0.1 + 0.9 * (state.task / CONFIG.nTasks)));
+  const A = drawProfile(), B = drawProfile();
+  const ans = { choice: null, pA: null, pB: null };
+
+  const rows = state.order.map(k =>
+    "<tr><th scope='row'>" + ATTR[k].label + "</th><td>" + A[k] + "</td><td>" + B[k] + "</td></tr>"
+  ).join("");
+
+  app.appendChild(node(
+    "<div><h1>Comparación " + t + " de " + CONFIG.nTasks + "</h1>" +
+    "<p>Imagine que en unas elecciones puede votar a una de estas dos personas candidatas. " +
+    "Lea con atención sus características.</p>" +
+    "<table><thead><tr><th></th><th>Candidato/a A</th><th>Candidato/a B</th></tr></thead>" +
+    "<tbody>" + rows + "</tbody></table></div>"));
+
+  app.appendChild(node("<h2>Si tuviera que elegir solo entre estas dos personas, ¿a quién preferiría votar?</h2>"));
+  app.appendChild(group([
+    { label: "Candidato/a A", value: "A" },
+    { label: "Candidato/a B", value: "B" }
+  ], v => { ans.choice = v; check(); }));
+
+  const scale = [];
+  for (let i = 0; i <= 10; i++) scale.push({ label: String(i), value: i });
+
+  app.appendChild(node("<h2>¿Con qué probabilidad votaría al Candidato/a A?</h2>" +
+    "<p class='muted'>0 = nada probable, 10 = completamente probable</p>"));
+  app.appendChild(group(scale, v => { ans.pA = v; check(); }, "scale"));
+
+  app.appendChild(node("<h2>¿Con qué probabilidad votaría al Candidato/a B?</h2>" +
+    "<p class='muted'>0 = nada probable, 10 = completamente probable</p>"));
+  app.appendChild(group(scale, v => { ans.pB = v; check(); }, "scale"));
+
+  const last = t === CONFIG.nTasks;
+  const next = node('<button class="primary" type="button" disabled>' +
+    (last ? "Enviar y terminar" : "Siguiente") + "</button>");
+  app.appendChild(next);
+
+  function check() {
+    next.disabled = !(ans.choice && ans.pA !== null && ans.pB !== null);
+  }
+
+  next.addEventListener("click", () => {
+    next.disabled = true;
+    const row = {
+      respondent_id: state.id,
+      timestamp: new Date().toISOString(),
+      fuente: state.src,
+      edad: state.demo.edad,
+      genero: state.demo.genero,
+      ideologia: state.demo.ideologia,
+      tarea: t,
+      orden_atributos: state.order.join(">"),
+      eleccion: ans.choice,
+      prob_A: ans.pA,
+      prob_B: ans.pB,
+      segundos_desde_inicio: Math.round((Date.now() - state.startedAt) / 1000)
+    };
+    ATTRS.forEach(a => { row["A_" + a.key] = A[a.key]; row["B_" + a.key] = B[a.key]; });
+    send(row);
+    state.task += 1;
+    if (state.task >= CONFIG.nTasks) showEnd(); else showTask();
+  });
+}
+
+function showEnd() {
+  clear();
+  app.appendChild(progress(1));
+  app.appendChild(node("<div><h1>Muchas gracias</h1>" +
+    "<p>Sus respuestas se han registrado. Ya puede cerrar esta página.</p></div>"));
+  if (!CONFIG.endpoint) {
+    app.appendChild(node('<div class="note">Modo prueba. Estas son las filas que se habrían guardado.</div>'));
+    const pre = document.createElement("pre");
+    pre.textContent = JSON.stringify(state.demoLog, null, 1);
+    app.appendChild(pre);
+  }
+}
+
+/* ============ INICIO ============ */
+if (CONFIG.endpoint) flush();
+showIntro();
+</script>
+</body>
+</html>
